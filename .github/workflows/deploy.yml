@@ -21,28 +21,24 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      # --- SSH prep (no here-strings, no awk; super compatible) ---
-      - name: Prepare SSH
+      # Start an ssh-agent and load your private key (handles passphrase)
+      - name: Load SSH key (with passphrase)
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SG_SSH_KEY }}     # your PRIVATE key
+          ssh-passphrase:  ${{ secrets.SG_PASSPHRASE }}  # add this secret if your key is encrypted
+
+      # Trust the server host key and do a quick connectivity probe
+      - name: Prepare known_hosts & test SSH
         run: |
           set -e
           mkdir -p ~/.ssh
-          chmod 700 ~/.ssh
-
-          # Write the PRIVATE key exactly as stored in the secret and normalize CRLF->LF
-          ( echo "${{ secrets.SG_SSH_KEY }}" | sed 's/\r$//' ) > ~/.ssh/id_rsa
-          chmod 600 ~/.ssh/id_rsa
-
-          # Fail early if the key is malformed
-          ssh-keygen -y -f ~/.ssh/id_rsa >/dev/null
-
-          # Trust the server host key so host-key verification doesn't fail
           touch ~/.ssh/known_hosts
           ssh-keyscan -p "${{ secrets.SG_PORT }}" "${{ secrets.SG_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null || true
-
-          # Quick connectivity probe (helps surface wrong user/host/port immediately)
-          ssh -o StrictHostKeyChecking=yes -i ~/.ssh/id_rsa -p "${{ secrets.SG_PORT }}" \
+          ssh -o StrictHostKeyChecking=yes -p "${{ secrets.SG_PORT }}" \
             "${{ secrets.SG_USER }}@${{ secrets.SG_HOST }}" "echo SSH_OK"
 
+      # Deploy with rsync (uses the ssh-agent, so no -i flag needed)
       - name: Deploy via rsync
         run: |
           set -e
@@ -50,9 +46,9 @@ jobs:
             --exclude ".git/" \
             --exclude ".github/" \
             --exclude "node_modules/" \
-            -e "ssh -i ~/.ssh/id_rsa -p ${{ secrets.SG_PORT }} -o StrictHostKeyChecking=yes" \
+            -e "ssh -p ${{ secrets.SG_PORT }} -o StrictHostKeyChecking=yes" \
             ./ "${{ secrets.SG_USER }}@${{ secrets.SG_HOST }}:${{ secrets.SG_PATH }}/"
 
-          # Show what landed (handy for debugging)
-          ssh -o StrictHostKeyChecking=yes -i ~/.ssh/id_rsa -p "${{ secrets.SG_PORT }}" \
+          # Show what landed
+          ssh -o StrictHostKeyChecking=yes -p "${{ secrets.SG_PORT }}" \
             "${{ secrets.SG_USER }}@${{ secrets.SG_HOST }}" "ls -la '${{ secrets.SG_PATH }}' | tail -n +1"
