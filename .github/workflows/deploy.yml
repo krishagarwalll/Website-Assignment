@@ -21,15 +21,15 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      # Start an ssh-agent and load your private key (handles passphrase)
-      - name: Load SSH key (with passphrase)
-        uses: webfactory/ssh-agent@v0.9.0
+      # Load passphrase-protected SSH key
+      - name: Setup SSH key (supports passphrase)
+        uses: shimataro/ssh-key-action@v2
         with:
-          ssh-private-key: ${{ secrets.SG_SSH_KEY }}     # your PRIVATE key
-          ssh-passphrase:  ${{ secrets.SG_PASSPHRASE }}  # add this secret if your key is encrypted
+          key: ${{ secrets.SG_SSH_KEY }}          # PRIVATE key
+          passphrase: ${{ secrets.SG_PASSPHRASE }} # your key's passphrase
+          known_hosts: ""                          # we'll add host key next step
 
-      # Trust the server host key and do a quick connectivity probe
-      - name: Prepare known_hosts & test SSH
+      - name: Add known_hosts & test SSH
         run: |
           set -e
           mkdir -p ~/.ssh
@@ -38,7 +38,6 @@ jobs:
           ssh -o StrictHostKeyChecking=yes -p "${{ secrets.SG_PORT }}" \
             "${{ secrets.SG_USER }}@${{ secrets.SG_HOST }}" "echo SSH_OK"
 
-      # Deploy with rsync (uses the ssh-agent, so no -i flag needed)
       - name: Deploy via rsync
         run: |
           set -e
