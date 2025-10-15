@@ -21,33 +21,59 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      # Load passphrase-protected SSH key
-      - name: Setup SSH key (supports passphrase)
-        uses: shimataro/ssh-key-action@v2
-        with:
-          key: ${{ secrets.SG_SSH_KEY }}          # PRIVATE key
-          passphrase: ${{ secrets.SG_PASSPHRASE }} # your key's passphrase
-          known_hosts: ""                          # we'll add host key next step
-
-      - name: Add known_hosts & test SSH
+      # Setup SSH (supports passphrase-protected keys)
+      - name: Prepare SSH (agent + key + known_hosts)
+        env:
+          SG_SSH_KEY: ${{ secrets.SG_SSH_KEY }}       # PRIVATE key (OpenSSH format)
+          SG_PASSPHRASE: ${{ secrets.SG_PASSPHRASE }} # leave empty if your key has no passphrase
+          SG_HOST: ${{ secrets.SG_HOST }}
+          SG_PORT: ${{ secrets.SG_PORT }}
         run: |
           set -e
+
           mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+
+          # Write key (normalize CRLF just in case)
+          printf "%s\n" "$SG_SSH_KEY" | sed 's/\r$//' > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+
+          # Start agent
+          eval "$(ssh-agent -s)"
+
+          # If a passphrase is set, use SSH_ASKPASS trick to feed it non-interactively
+          if [ -n "${SG_PASSPHRASE:-}" ]; then
+            echo '#!/usr/bin/env bash' > /tmp/askpass.sh
+            echo 'echo "$SG_PASSPHRASE"' >> /tmp/askpass.sh
+            chmod +x /tmp/askpass.sh
+            export SSH_ASKPASS=/tmp/askpass.sh
+            export DISPLAY=:0
+            setsid -w ssh-add ~/.ssh/id_rsa </dev/null
+          else
+            ssh-add ~/.ssh/id_rsa
+          fi
+
+          # Pin host key
           touch ~/.ssh/known_hosts
-          ssh-keyscan -p "${{ secrets.SG_PORT }}" "${{ secrets.SG_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null || true
-          ssh -o StrictHostKeyChecking=yes -p "${{ secrets.SG_PORT }}" \
-            "${{ secrets.SG_USER }}@${{ secrets.SG_HOST }}" "echo SSH_OK"
+          ssh-keyscan -p "$SG_PORT" "$SG_HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
+
+          # Quick probe
+          ssh -o StrictHostKeyChecking=yes -p "$SG_PORT" "${{ secrets.SG_USER }}@$SG_HOST" "echo SSH_OK"
 
       - name: Deploy via rsync
+        env:
+          SG_HOST: ${{ secrets.SG_HOST }}
+          SG_PORT: ${{ secrets.SG_PORT }}
+          SG_USER: ${{ secrets.SG_USER }}
+          SG_PATH: ${{ secrets.SG_PATH }}   # e.g. /home/<sguser>/public_html
         run: |
           set -e
           rsync -avz --delete \
             --exclude ".git/" \
             --exclude ".github/" \
             --exclude "node_modules/" \
-            -e "ssh -p ${{ secrets.SG_PORT }} -o StrictHostKeyChecking=yes" \
-            ./ "${{ secrets.SG_USER }}@${{ secrets.SG_HOST }}:${{ secrets.SG_PATH }}/"
+            -e "ssh -p $SG_PORT -o StrictHostKeyChecking=yes" \
+            ./ "$SG_USER@$SG_HOST:$SG_PATH/"
 
           # Show what landed
-          ssh -o StrictHostKeyChecking=yes -p "${{ secrets.SG_PORT }}" \
-            "${{ secrets.SG_USER }}@${{ secrets.SG_HOST }}" "ls -la '${{ secrets.SG_PATH }}' | tail -n +1"
+          ssh -o StrictHostKeyChecking=yes -p "$SG_PORT" "$SG_USER@$SG_HOST" "ls -la '$SG_PATH' | tail -n +1"
