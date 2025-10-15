@@ -16,72 +16,43 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    defaults:
-      run:
-        shell: bash
 
     steps:
       - name: Checkout repo
-      # v4 uses sparse-checkout by default for speed; depth=0 grabs full history if you need it
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
+      # --- SSH prep (no here-strings, no awk; super compatible) ---
       - name: Prepare SSH
-        env:
-          SG_HOST: ${{ secrets.SG_HOST }}
-          SG_PORT: ${{ secrets.SG_PORT }}
-          SG_USER: ${{ secrets.SG_USER }}
-          SG_SSH_KEY: ${{ secrets.SG_SSH_KEY }}   # PRIVATE key (OpenSSH format)
         run: |
-          set -euo pipefail
-
-          # Ensure OpenSSH client is present (usually is, but harmless if already installed)
-          if ! command -v ssh >/dev/null; then
-            sudo apt-get update && sudo apt-get install -y openssh-client
-          fi
-
+          set -e
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
 
-          # Write the private key exactly as-is and normalize any CRLF to LF
-          awk 'BEGIN{RS="\r?\n"; ORS="\n"} {print}' <<<"$SG_SSH_KEY" > ~/.ssh/id_rsa
-
-          # (If the above ever fails to preserve newlines in your org, use the heredoc below instead)
-          # cat > ~/.ssh/id_rsa <<'EOF'
-          # ${{ secrets.SG_SSH_KEY }}
-          # EOF
-
+          # Write the PRIVATE key exactly as stored in the secret and normalize CRLF->LF
+          ( echo "${{ secrets.SG_SSH_KEY }}" | sed 's/\r$//' ) > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
 
-          # Fail fast if the key is malformed (gives a clear error)
-          ssh-keygen -y -f ~/.ssh/id_rsa >/dev/null 2>&1 || {
-            echo "ERROR: Private key is malformed (bad newlines or missing header/footer)."; exit 1;
-          }
+          # Fail early if the key is malformed
+          ssh-keygen -y -f ~/.ssh/id_rsa >/dev/null
 
-          # Pin server host key to avoid 'Host key verification failed'
+          # Trust the server host key so host-key verification doesn't fail
           touch ~/.ssh/known_hosts
-          ssh-keyscan -p "$SG_PORT" "$SG_HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
+          ssh-keyscan -p "${{ secrets.SG_PORT }}" "${{ secrets.SG_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null || true
 
-          # Optional quick probe so failures are obvious before rsync
-          ssh -o StrictHostKeyChecking=yes -i ~/.ssh/id_rsa -p "$SG_PORT" "$SG_USER@$SG_HOST" "echo SSH_OK"
+          # Quick connectivity probe (helps surface wrong user/host/port immediately)
+          ssh -o StrictHostKeyChecking=yes -i ~/.ssh/id_rsa -p "${{ secrets.SG_PORT }}" \
+            "${{ secrets.SG_USER }}@${{ secrets.SG_HOST }}" "echo SSH_OK"
 
       - name: Deploy via rsync
-        env:
-          SG_HOST: ${{ secrets.SG_HOST }}
-          SG_PORT: ${{ secrets.SG_PORT }}
-          SG_USER: ${{ secrets.SG_USER }}
-          SG_PATH: ${{ secrets.SG_PATH }}         # e.g., /home/<sguser>/public_html
         run: |
-          set -euo pipefail
-
-          # Rsync with sane excludes; --delete keeps the server in sync with the repo
+          set -e
           rsync -avz --delete \
             --exclude ".git/" \
             --exclude ".github/" \
             --exclude "node_modules/" \
-            -e "ssh -i ~/.ssh/id_rsa -p $SG_PORT -o StrictHostKeyChecking=yes" \
-            ./ "$SG_USER@$SG_HOST:$SG_PATH/"
+            -e "ssh -i ~/.ssh/id_rsa -p ${{ secrets.SG_PORT }} -o StrictHostKeyChecking=yes" \
+            ./ "${{ secrets.SG_USER }}@${{ secrets.SG_HOST }}:${{ secrets.SG_PATH }}/"
 
-          # List what landed (handy for debugging)
-          ssh -o StrictHostKeyChecking=yes -i ~/.ssh/id_rsa -p "$SG_PORT" "$SG_USER@$SG_HOST" "ls -la $SG_PATH | tail -n +1"
+          # Show what landed (handy for debugging)
+          ssh -o StrictHostKeyChecking=yes -i ~/.ssh/id_rsa -p "${{ secrets.SG_PORT }}" \
+            "${{ secrets.SG_USER }}@${{ secrets.SG_HOST }}" "ls -la '${{ secrets.SG_PATH }}' | tail -n +1"
