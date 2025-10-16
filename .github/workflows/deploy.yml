@@ -1,4 +1,4 @@
-name: deploy
+name: Deploy to SiteGround
 
 on:
   push:
@@ -15,89 +15,23 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
 
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Validate secrets
-        run: |
-          if [ -z "${{ secrets.SG_HOST }}" ]; then
-            echo "Error: SG_HOST secret is not set"
-            exit 1
-          fi
-          if [ -z "${{ secrets.SG_USER }}" ]; then
-            echo "Error: SG_USER secret is not set"
-            exit 1
-          fi
-          if [ -z "${{ secrets.SG_PORT }}" ]; then
-            echo "Error: SG_PORT secret is not set"
-            exit 1
-          fi
-          if [ -z "${{ secrets.SG_SSH_KEY }}" ]; then
-            echo "Error: SG_SSH_KEY secret is not set"
-            exit 1
-          fi
-          if [ -z "${{ secrets.SG_PATH }}" ]; then
-            echo "Error: SG_PATH secret is not set"
-            exit 1
-          fi
-          echo "All required secrets are set"
-
-      - name: Prepare SSH (agent + key + known_hosts)
+      - name: Setup SSH
         env:
           SG_SSH_KEY: ${{ secrets.SG_SSH_KEY }}
-          SG_PASSPHRASE: ${{ secrets.SG_PASSPHRASE }}
           SG_HOST: ${{ secrets.SG_HOST }}
           SG_PORT: ${{ secrets.SG_PORT }}
         run: |
-          set -e
-
-          # Trim whitespace from host
-          SG_HOST=$(echo "$SG_HOST" | xargs)
-          
-          echo "Testing DNS resolution for: $SG_HOST"
-          nslookup "$SG_HOST" || host "$SG_HOST" || echo "Warning: DNS lookup failed"
-
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
-
-          # Write key (normalize CRLF and trim)
-          printf "%s\n" "$SG_SSH_KEY" | sed 's/\r$//' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' > ~/.ssh/id_rsa
+          echo "$SG_SSH_KEY" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
-
-          # Start agent
-          eval "$(ssh-agent -s)"
-
-          # If a passphrase is set, use SSH_ASKPASS trick
-          if [ -n "${SG_PASSPHRASE:-}" ]; then
-            echo '#!/usr/bin/env bash' > /tmp/askpass.sh
-            echo 'echo "$SG_PASSPHRASE"' >> /tmp/askpass.sh
-            chmod +x /tmp/askpass.sh
-            export SSH_ASKPASS=/tmp/askpass.sh
-            export DISPLAY=:0
-            setsid -w ssh-add ~/.ssh/id_rsa </dev/null
-          else
-            ssh-add ~/.ssh/id_rsa
-          fi
-
-          # Pin host key with retry
-          touch ~/.ssh/known_hosts
-          echo "Scanning SSH host key for $SG_HOST on port $SG_PORT..."
-          for i in 1 2 3; do
-            if ssh-keyscan -p "$SG_PORT" "$SG_HOST" >> ~/.ssh/known_hosts 2>&1; then
-              echo "Successfully scanned host key"
-              break
-            else
-              echo "Attempt $i failed, retrying..."
-              sleep 2
-            fi
-          done
-
-          # Quick probe
-          echo "Testing SSH connection..."
-          ssh -v -o StrictHostKeyChecking=yes -o ConnectTimeout=10 -p "$SG_PORT" "${{ secrets.SG_USER }}@$SG_HOST" "echo 'SSH connection successful'"
+          ssh-keyscan -p "$SG_PORT" "$SG_HOST" >> ~/.ssh/known_hosts 2>/dev/null
 
       - name: Deploy via rsync
         env:
@@ -106,25 +40,9 @@ jobs:
           SG_USER: ${{ secrets.SG_USER }}
           SG_PATH: ${{ secrets.SG_PATH }}
         run: |
-          set -e
-          
-          # Trim whitespace
-          SG_HOST=$(echo "$SG_HOST" | xargs)
-          SG_USER=$(echo "$SG_USER" | xargs)
-          SG_PATH=$(echo "$SG_PATH" | xargs)
-          
-          echo "Deploying to $SG_USER@$SG_HOST:$SG_PATH"
-          
           rsync -avz --delete \
             --exclude ".git/" \
             --exclude ".github/" \
-            --exclude "node_modules/" \
-            --exclude ".gitignore" \
             --exclude "README.md" \
-            -e "ssh -p $SG_PORT -o StrictHostKeyChecking=yes -o ConnectTimeout=30" \
+            -e "ssh -p $SG_PORT -o StrictHostKeyChecking=accept-new" \
             ./ "$SG_USER@$SG_HOST:$SG_PATH/"
-
-          echo "Deployment completed successfully"
-          
-          # Show what landed
-          ssh -o StrictHostKeyChecking=yes -p "$SG_PORT" "$SG_USER@$SG_HOST" "ls -la '$SG_PATH' | head -20"
