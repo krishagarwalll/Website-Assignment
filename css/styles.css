@@ -380,3 +380,65 @@ ul {
       width: 100%;
     }
   }
+
+    /* Index page styles */
+    .index-section h3 {
+        font-weight: 600;
+        font-size: 40px;
+    }
+
+    #special-heading {
+        color: #007BFF;
+        font-style: italic;
+    }
+
+    .IndexPara {
+        margin-left: 5%;
+        margin-right: 5%;
+    }
+
+    #about-me-heading {
+        font-size: 40px;
+        font-weight: 600;
+        margin-top: 30px;
+    }
+
+    #photo-heading {
+        margin-top: 70px;
+        margin-bottom: 20px;
+    }
+
+    .index-section h3 {
+        font-weight: 600;
+        font-size: 40px;
+    }
+
+    /* Activity page styles */
+    .activity-page #special-heading {
+        color: #000000;
+        font-size: 38px;
+    }
+
+    .photographyPara p {
+        margin-bottom: 2%;
+    }
+
+    .activity-subheading {
+        color: black;
+        margin-top: 20px;
+        text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.1);
+    }
+
+    .activity-page p {
+        font-size: 18px;
+        margin-top: 20px;
+    }
+
+    /* Hometown page styles */
+    .hometown-page h4 {
+        font-family: 'Samarkan';
+    }
+
+    .hometown-page p {
+        margin-left: 3px;
+    }
